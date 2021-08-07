@@ -30,7 +30,9 @@ class CUWrapper {
 public:
   /// Allocate memory on device. Takes a device pointer reference and size
   template <typename Ty> void cudaMalloc(Ty *&devicePtr, size_t size) {
-    // host is device 1
+    int num_devices = omp_get_num_devices();
+    assert(num_devices > 0);
+
     // device is device 0
     devicePtr = (Ty *)omp_target_alloc(size, 0);
   }
@@ -38,14 +40,28 @@ public:
   /// Copy memory from host to device or device to host.
   template <typename Ty>
   void cudaMemcpy(Ty *dst, Ty *src, size_t length, cudaMemcpyDir direction) {
+    // First, make sure we have at least one nonhost device
+    int num_devices = omp_get_num_devices();
+    assert(num_devices > 0);
+
+    // get the host device number (which is the initial device)
+    int host_device_num = omp_get_initial_device();
+    
+    // default to device 0 as a GPU representative
+    // (if we have num_devices > 0, then for sure device 0 exists)
+    int gpu_device_num = 0;
+
     // default to copy from host to device
-    // device = 0 , host = 1
-    int dst_device_num = 0, src_device_num = 1;
+    int dst_device_num = gpu_device_num;
+    int src_device_num = host_device_num;
+
     if (direction == cudaMemcpyDeviceToHost) {
-      // copy from host to device
-      dst_device_num = 1;
-      src_device_num = 0;
+      // copy from device to host
+      dst_device_num = host_device_num;
+      src_device_num = gpu_device_num;
     }
+    
+    // parameters are now set, call omp_target_memcpy
     omp_target_memcpy(dst, src, length, 0, 0, dst_device_num, src_device_num);
   }
 

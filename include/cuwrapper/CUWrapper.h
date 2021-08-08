@@ -77,6 +77,20 @@ public:
     // parameters are now set, call omp_target_memcpy
     omp_target_memcpy(dst, src, length, 0, 0, dst_device_num, src_device_num);
   }
+  
+  /// Kernel launch function
+  /// TODO: Fix mapping bug!! NOT WORKING
+  template <typename Func, typename... Args>
+  void launch(Func kernel, Args... args) {
+    // assert(cfg.gridSize > 0);
+    // assert(cfg.blockSize > 0);
+#pragma omp target teams num_teams(cfg.gridSize) thread_limit(cfg.blockSize) map(tofrom: kernel)
+    {
+#pragma omp parallel
+      { kernel(args...); }
+    }
+  }
+
 
   /// Free allocated memory on device. Takes a device pointer
   template <typename Ty> void cudaFree(Ty *devicePtr) {

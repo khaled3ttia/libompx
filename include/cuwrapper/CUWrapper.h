@@ -1,22 +1,23 @@
+#include <assert.h>
+
 namespace libompx {
 
-/// Struct used to create blockIdx, blockDim, and threadIdx
+/// Kernel Launch Configuration Struct (Assuming 1D for now)
 typedef struct {
-  int x; // x dimension
-  int y; // y dimension
-  int z; // z dimension
-} d3;
-
-/// Kernel Launch Configuration Struct
-typedef struct {
-  int gridSize;  // Number of thread blocks per grid
-  int blockSize; // Number of threads per thread block
-  int smemSize;  // Shared Memory Size
+  int gridSize;    // Number of thread blocks per grid
+  int blockSize;   // Number of threads per thread block
+  size_t smemSize; // Shared Memory Size
+  int stream;      // associated stream
 } launchConfig;
 
-d3 blockIdx;  // Block index within grid
-d3 blockDim;  // Block dimension (no. of threads per block)
-d3 threadIdx; // Thread index within the thread block
+// Block index within grid
+#define blockIdx omp_get_team_num()
+
+// Block dimension (no. of threads per block)
+#define blockDim omp_get_num_threads()
+
+// Thread index within thread block
+#define threadIdx omp_get_thread_num()
 
 /// used in cudaMemcpy to specify the copy direction
 enum cudaMemcpyDir {
@@ -27,14 +28,26 @@ enum cudaMemcpyDir {
 /// A class to implement CUDA-style parallelism functions
 class CUWrapper {
 
+private:
+  launchConfig cfg;
+
 public:
+  void config(int gridSize, int blockSize, size_t smemSize = 0,
+              int stream = 0) {
+
+    cfg.gridSize = gridSize;
+    cfg.blockSize = blockSize;
+    cfg.smemSize = smemSize;
+    cfg.stream = stream;
+  }
+
   /// Allocate memory on device. Takes a device pointer reference and size
-  template <typename Ty> void cudaMalloc(Ty *&devicePtr, size_t size) {
+  template <typename Ty> void cudaMalloc(Ty **devicePtr, size_t size) {
     int num_devices = omp_get_num_devices();
     assert(num_devices > 0);
 
     // device is device 0
-    devicePtr = (Ty *)omp_target_alloc(size, 0);
+    *devicePtr = (Ty *)omp_target_alloc(size, 0);
   }
 
   /// Copy memory from host to device or device to host.
@@ -46,7 +59,7 @@ public:
 
     // get the host device number (which is the initial device)
     int host_device_num = omp_get_initial_device();
-    
+
     // default to device 0 as a GPU representative
     // (if we have num_devices > 0, then for sure device 0 exists)
     int gpu_device_num = 0;
@@ -60,17 +73,15 @@ public:
       dst_device_num = host_device_num;
       src_device_num = gpu_device_num;
     }
-    
+
     // parameters are now set, call omp_target_memcpy
     omp_target_memcpy(dst, src, length, 0, 0, dst_device_num, src_device_num);
   }
 
-  /// Kernel launch function
-  template <typename Func> void launch(launchConfig cfg, Func kernel) {}
-
   /// Free allocated memory on device. Takes a device pointer
   template <typename Ty> void cudaFree(Ty *devicePtr) {
-    omp_target_free(devicePtr);
+    assert(omp_get_num_devices() > 0);
+    omp_target_free(devicePtr, 0);
   }
 };
 

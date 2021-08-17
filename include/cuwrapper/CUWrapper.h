@@ -40,8 +40,8 @@ template <typename Ty> void cudaMalloc(Ty **devicePtr, size_t size) {
   int num_devices = omp_get_num_devices();
   assert(num_devices > 0);
 
-  // device is device 0
-  *devicePtr = (Ty *)omp_target_alloc(size, 0);
+  // allocate on default device
+  *devicePtr = (Ty *)omp_target_alloc(size, omp_get_default_device());
 }
 
 /// Copy memory from host to device or device to host.
@@ -54,9 +54,8 @@ void cudaMemcpy(Ty *dst, Ty *src, size_t length, cudaMemcpyDir direction) {
   // get the host device number (which is the initial device)
   int host_device_num = omp_get_initial_device();
 
-  // default to device 0 as a GPU representative
-  // (if we have num_devices > 0, then for sure device 0 exists)
-  int gpu_device_num = 0;
+  // use default device for gpu
+  int gpu_device_num = omp_get_default_device();
 
   // default to copy from host to device
   int dst_device_num = gpu_device_num;
@@ -74,7 +73,7 @@ void cudaMemcpy(Ty *dst, Ty *src, size_t length, cudaMemcpyDir direction) {
 
 /// Kernel launch function
 template <typename Ty, typename Func, Func kernel, typename... Args>
-void launch(int n , Ty *ptrA, Ty *ptrB, Args... args) {
+void launch(Ty *ptrA, Ty *ptrB, Args... args) {
   // assert(cfg.gridSize > 0);
   // assert(cfg.blockSize > 0);
 #pragma omp target teams is_device_ptr(ptrA, ptrB) num_teams(cfg.gridSize) thread_limit(cfg.blockSize)   
@@ -87,7 +86,7 @@ void launch(int n , Ty *ptrA, Ty *ptrB, Args... args) {
 /// Free allocated memory on device. Takes a device pointer
 template <typename Ty> void cudaFree(Ty *devicePtr) {
   assert(omp_get_num_devices() > 0);
-  omp_target_free(devicePtr, 0);
+  omp_target_free(devicePtr, omp_get_default_device());
 }
 
 } // namespace libompx

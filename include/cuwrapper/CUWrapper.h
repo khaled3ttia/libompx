@@ -1,14 +1,12 @@
 #include <assert.h>
 #include <atomic>
-#include <stdio.h>
-#include <vector>
 namespace libompx {
 
 /// Kernel Launch Configuration Struct (Assuming 1D for now)
 typedef struct {
   int gridSize;    // Number of thread blocks per grid
   int blockSize;   // Number of threads per thread block
-  size_t smemSize; // Shared Memory Size
+  int smemSize; // Shared Memory Size
   int stream;      // associated stream
 } launchConfig;
 
@@ -30,8 +28,6 @@ enum cudaMemcpyDir {
   cudaMemcpyHostToDevice, // From Host to Device
   cudaMemcpyDeviceToHost  // From Device to Host
 };
-
-launchConfig cfg;
 
 /// Allocate memory on device. Takes a device pointer reference and size
 template <typename Ty> void cudaMalloc(Ty **devicePtr, size_t size) {
@@ -71,20 +67,13 @@ void cudaMemcpy(Ty *dst, Ty *src, size_t length, cudaMemcpyDir direction) {
 
 /// Kernel launch function
 template <typename Ty, typename Func, Func kernel, typename... Args>
-void launch(const std::vector<int> &config, Ty *ptrA, Ty *ptrB, Args... args) {
-  // assert(cfg.gridSize > 0);
-  // assert(cfg.blockSize > 0);
-  // assert(config.size() > 1);
-
-  // Capture configuration
-  cfg.gridSize = config[0];
-  cfg.blockSize = config[1];
-  cfg.smemSize = config.size() > 2 ? config[2] : 0;
-  cfg.stream = config.size() > 3 ? config[3] : 0;
+void launch(const launchConfig &config, Ty *ptrA, Ty *ptrB, Args... args) {
+  // assert(config.gridSize > 0);
+  // assert(config.blockSize > 0);
 
   int kernel_no = num_kernels++;
-#pragma omp target teams is_device_ptr(ptrA, ptrB) num_teams(cfg.gridSize)     \
-    thread_limit(cfg.blockSize) depend(out                                     \
+#pragma omp target teams is_device_ptr(ptrA, ptrB) num_teams(config.gridSize)     \
+    thread_limit(config.blockSize) depend(out                                     \
                                        : kernels[kernel_no]) nowait
   {
 

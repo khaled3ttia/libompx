@@ -10,6 +10,13 @@ typedef struct {
   int stream;      // associated stream
 } launchConfig;
 
+typedef struct dim3 {
+    dim3(int _x, int _y=1, int _z=1 ): x(_x), y(_y), z(_z) {}
+    int x;
+    int y;
+    int z;
+} dim3;
+
 static int *kernels = nullptr;
 static std::atomic<unsigned long> num_kernels = {0};
 static std::atomic<unsigned long> synced_kernels = {0};
@@ -81,6 +88,23 @@ void launch(const launchConfig &config, Ty *ptrA, Ty *ptrB, Args... args) {
     { kernel(ptrA, ptrB, args...); }
   }
 }
+
+template <typename Ty, typename Func, Func kernel, typename... Args>
+void launch3(const launchConfig &config, Ty *ptrA, Ty *ptrB, Ty *ptrC, Args... args) {
+  // assert(config.gridSize > 0);
+  // assert(config.blockSize > 0);
+
+  int kernel_no = num_kernels++;
+#pragma omp target teams is_device_ptr(ptrA, ptrB, ptrC) num_teams(config.gridSize)     \
+    thread_limit(config.blockSize) depend(out                                     \
+                                       : kernels[kernel_no]) nowait
+  {
+
+#pragma omp parallel
+    { kernel(ptrA, ptrB, ptrC, args...); }
+  }
+}
+
 
 /// Device Synchronization
 void cudaDeviceSynchronize() {

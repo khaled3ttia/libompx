@@ -1,4 +1,5 @@
 #include <assert.h>
+#include <atomic>
 #include <stdio.h>
 #include <vector>
 namespace libompx {
@@ -10,6 +11,10 @@ typedef struct {
   size_t smemSize; // Shared Memory Size
   int stream;      // associated stream
 } launchConfig;
+
+static int *kernels = nullptr;
+static std::atomic<unsigned long> num_kernels = {0};
+static std::atomic<unsigned long> synced_kernels = {0};
 
 // Block index within grid
 #define blockIdx omp_get_team_num()
@@ -77,17 +82,37 @@ void launch(const std::vector<int> &config, Ty *ptrA, Ty *ptrB, Args... args) {
   cfg.smemSize = config.size() > 2 ? config[2] : 0;
   cfg.stream = config.size() > 3 ? config[3] : 0;
 
+  int kernel_no = num_kernels++;
 #pragma omp target teams is_device_ptr(ptrA, ptrB) num_teams(cfg.gridSize)     \
-    thread_limit(cfg.blockSize)
+    thread_limit(cfg.blockSize) depend(out                                     \
+                                       : kernels[kernel_no]) nowait
   {
+
 #pragma omp parallel
     { kernel(ptrA, ptrB, args...); }
   }
 }
 
+/// Device Synchronization
+void cudaDeviceSynchronize() {
+  unsigned long kernel_first = synced_kernels;
+  unsigned long kernel_last = num_kernels;
+  if (kernel_first < kernel_last) {
+    for (unsigned long i = kernel_first; i < kernel_last; ++i) {
+#pragma omp parallel
+#pragma omp single
+#pragma omp task depend(in : kernels[i])
+      {}
+    }
+    synced_kernels.compare_exchange_strong(kernel_first, kernel_last);
+  }
+}
+
 /// Free allocated memory on device. Takes a device pointer
 template <typename Ty> void cudaFree(Ty *devicePtr) {
+
   assert(omp_get_num_devices() > 0);
+  cudaDeviceSynchronize();
   omp_target_free(devicePtr, omp_get_default_device());
 }
 

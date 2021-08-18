@@ -6,18 +6,18 @@
  * Louis-Noel Pouchet <pouchet@cse.ohio-state.edu>
  * Web address: http://www.cse.ohio-state.edu/~pouchet/software/polybench/GPU
  */
+#include "CUWrapper.h"
+#include <assert.h>
+#include <math.h>
 #include <omp.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <math.h>
-#include <assert.h>
-#include <unistd.h>
 #include <sys/time.h>
-#include "CUWrapper.h"
+#include <unistd.h>
 
 #include "polybenchUtilFuncts.h"
 
-//define the error threshold for the results "not matching"
+// define the error threshold for the results "not matching"
 #define PERCENT_DIFF_ERROR_THRESHOLD 0.5
 
 #define GPU_DEVICE 0
@@ -37,191 +37,172 @@
 /* Can switch DATA_TYPE between float and double */
 typedef float DATA_TYPE;
 
-
 using namespace libompx;
-void init_array(DATA_TYPE *x, DATA_TYPE *A)
-{
-	int i, j;
+void init_array(DATA_TYPE *x, DATA_TYPE *A) {
+  int i, j;
 
-	for (i = 0; i < NX; i++)
-	{
-		x[i] = i * M_PI;
-		for (j = 0; j < NY; j++)
-		{
-			A[i*NY + j] = ((DATA_TYPE) i*(j)) / NX;
-		}
-	}
+  for (i = 0; i < NX; i++) {
+    x[i] = i * M_PI;
+    for (j = 0; j < NY; j++) {
+      A[i * NY + j] = ((DATA_TYPE)i * (j)) / NX;
+    }
+  }
 }
 
+void compareResults(DATA_TYPE *z, DATA_TYPE *z_outputFromGpu) {
+  int i, fail;
+  fail = 0;
 
-void compareResults(DATA_TYPE *z, DATA_TYPE *z_outputFromGpu)
-{
-	int i, fail;
-	fail = 0;
+  for (i = 0; i < NY; i++) {
+    if (percentDiff(z[i], z_outputFromGpu[i]) > PERCENT_DIFF_ERROR_THRESHOLD) {
+      fail++;
+    }
+  }
 
-	for (i=0; i<NY; i++)
-	{
-		if (percentDiff(z[i], z_outputFromGpu[i]) > PERCENT_DIFF_ERROR_THRESHOLD)
-		{
-			fail++;
-		}		
-	}
-	
-	// print results
-	printf("Non-Matching CPU-GPU Outputs Beyond Error Threshold of %4.2f Percent: %d\n", PERCENT_DIFF_ERROR_THRESHOLD, fail);
+  // print results
+  printf("Non-Matching CPU-GPU Outputs Beyond Error Threshold of %4.2f "
+         "Percent: %d\n",
+         PERCENT_DIFF_ERROR_THRESHOLD, fail);
 }
 
 /*
 void GPU_argv_init()
 {
-	cudaDeviceProp deviceProp;
-	cudaGetDeviceProperties(&deviceProp, GPU_DEVICE);
-	printf("setting device %d with name %s\n",GPU_DEVICE,deviceProp.name);
-	cudaSetDevice( GPU_DEVICE );
+        cudaDeviceProp deviceProp;
+        cudaGetDeviceProperties(&deviceProp, GPU_DEVICE);
+        printf("setting device %d with name %s\n",GPU_DEVICE,deviceProp.name);
+        cudaSetDevice( GPU_DEVICE );
 }
 */
 
-void atax_kernel1(DATA_TYPE *A, DATA_TYPE *x, DATA_TYPE *tmp)
-{
-	int i = blockIdx * blockDim + threadIdx;
+void atax_kernel1(DATA_TYPE *A, DATA_TYPE *x, DATA_TYPE *tmp) {
+  int i = blockIdx * blockDim + threadIdx;
 
-	if (i < NX)
-	{
-		int j;
-		for(j=0; j < NY; j++)
-		{
-			tmp[i] += A[i * NY + j] * x[j];
-		}
-	}
-}
-
-void atax_kernel2(DATA_TYPE *A, DATA_TYPE *y, DATA_TYPE *tmp)
-{
-	int j = blockIdx * blockDim + threadIdx;
-	
-	if (j < NY)
-	{
-		int i;
-		for(i=0; i < NX; i++)
-		{
-			y[j] += A[i * NY + j] * tmp[i];
-		}
-	}
-}
-
-
-void atax_cpu(DATA_TYPE* A, DATA_TYPE* x, DATA_TYPE* y, DATA_TYPE* tmp)
-{
-	int i,j;
-	
-	for (i= 0; i < NY; i++)
-	{
-    	y[i] = 0;
-	}
-  
-	for (i = 0; i < NX; i++)
- 	{
-      	tmp[i] = 0;
-
-      	for (j = 0; j < NY; j++)
-		{
-			tmp[i] = tmp[i] + A[i*NY + j] * x[j];
-		}
-		
-      	for (j = 0; j < NY; j++)
-		{
-			y[j] = y[j] + A[i*NY + j] * tmp[i];
-		}
+  if (i < NX) {
+    int j;
+    for (j = 0; j < NY; j++) {
+      tmp[i] += A[i * NY + j] * x[j];
     }
+  }
 }
 
+void atax_kernel2(DATA_TYPE *A, DATA_TYPE *y, DATA_TYPE *tmp) {
+  int j = blockIdx * blockDim + threadIdx;
 
-void ataxGpu(DATA_TYPE* A, DATA_TYPE* x, DATA_TYPE* y, DATA_TYPE* tmp, DATA_TYPE* y_outputFromGpu)
-{
-	double t_start, t_end;
-
-	DATA_TYPE *A_gpu;
-	DATA_TYPE *x_gpu;
-	DATA_TYPE *y_gpu;
-	DATA_TYPE *tmp_gpu;
-
-	cudaMalloc((void **)&A_gpu, sizeof(DATA_TYPE) * NX * NY);
-	cudaMalloc((void **)&x_gpu, sizeof(DATA_TYPE) * NY);
-	cudaMalloc((void **)&y_gpu, sizeof(DATA_TYPE) * NY);
-	cudaMalloc((void **)&tmp_gpu, sizeof(DATA_TYPE) * NX);
-	
-	cudaMemcpy(A_gpu, A, sizeof(DATA_TYPE) * NX * NY, cudaMemcpyHostToDevice);
-	cudaMemcpy(x_gpu, x, sizeof(DATA_TYPE) * NY, cudaMemcpyHostToDevice);
-	cudaMemcpy(y_gpu, y, sizeof(DATA_TYPE) * NY, cudaMemcpyHostToDevice);
-	cudaMemcpy(tmp_gpu, tmp, sizeof(DATA_TYPE) * NX, cudaMemcpyHostToDevice);
-	
-	dim3 block(DIM_THREAD_BLOCK_X, DIM_THREAD_BLOCK_Y);
-	dim3 grid1((size_t)(ceil( ((float)NX) / ((float)block.x) )), 1);
-	dim3 grid2((size_t)(ceil( ((float)NY) / ((float)block.x) )), 1);
-
-	t_start = rtclock();
-	//atax_kernel1<<< grid1, block >>>(A_gpu,x_gpu,tmp_gpu);
-	launch3<DATA_TYPE,decltype(atax_kernel1), atax_kernel1>({grid1.x, block.x}, A_gpu, x_gpu, tmp_gpu);
-    cudaDeviceSynchronize();
-	//atax_kernel2<<< grid2, block >>>(A_gpu,y_gpu,tmp_gpu);
-	launch3<DATA_TYPE,decltype(atax_kernel2), atax_kernel2>({grid2.x, block.x}, A_gpu, y_gpu, tmp_gpu);
-    cudaDeviceSynchronize();
-	t_end = rtclock();
-	fprintf(stdout, "GPU Runtime: %0.6lfs\n", t_end - t_start);
-	
-	cudaMemcpy(y_outputFromGpu, y_gpu, sizeof(DATA_TYPE) * NX, cudaMemcpyDeviceToHost);
-
-	cudaFree(A_gpu);
-	cudaFree(x_gpu);
-	cudaFree(y_gpu);
-	cudaFree(tmp_gpu);
+  if (j < NY) {
+    int i;
+    for (i = 0; i < NX; i++) {
+      y[j] += A[i * NY + j] * tmp[i];
+    }
+  }
 }
 
+void atax_cpu(DATA_TYPE *A, DATA_TYPE *x, DATA_TYPE *y, DATA_TYPE *tmp) {
+  int i, j;
 
-int main(int argc, char** argv)
-{
-	double t_start, t_end;
+  for (i = 0; i < NY; i++) {
+    y[i] = 0;
+  }
 
-	DATA_TYPE* A;
-	DATA_TYPE* x;
-	DATA_TYPE* y;
-	DATA_TYPE* y_outputFromGpu;
-	DATA_TYPE* tmp;
+  for (i = 0; i < NX; i++) {
+    tmp[i] = 0;
 
-	//A = (DATA_TYPE*)malloc(NX*NY*sizeof(DATA_TYPE));
-    A = new DATA_TYPE[NX*NY];
-	//x = (DATA_TYPE*)malloc(NY*sizeof(DATA_TYPE));
-    x = new DATA_TYPE[NY];
-	//y = (DATA_TYPE*)malloc(NY*sizeof(DATA_TYPE));
-    y = new DATA_TYPE[NY];
-	//y_outputFromGpu = (DATA_TYPE*)malloc(NY*sizeof(DATA_TYPE));
-	y_outputFromGpu = new DATA_TYPE[NY];
-    //tmp = (DATA_TYPE*)malloc(NX*sizeof(DATA_TYPE));
-    tmp = new DATA_TYPE[NX];
+    for (j = 0; j < NY; j++) {
+      tmp[i] = tmp[i] + A[i * NY + j] * x[j];
+    }
 
-	init_array(x, A);
-
-	//GPU_argv_init();
-	ataxGpu(A, x, y, tmp, y_outputFromGpu);
-	
-	t_start = rtclock();
-	atax_cpu(A, x, y, tmp);
-	t_end = rtclock();
-	fprintf(stdout, "CPU Runtime: %0.6lfs\n", t_end - t_start);
-
-	compareResults(y, y_outputFromGpu);
-
-	//free(A);
-    delete [] A;
-	//free(x);
-    delete [] x;
-	//free(y);
-    delete [] y;
-	//free(y_outputFromGpu);
-    delete [] y_outputFromGpu;
-	//free(tmp);
-    delete [] tmp;
-
-  	return 0;
+    for (j = 0; j < NY; j++) {
+      y[j] = y[j] + A[i * NY + j] * tmp[i];
+    }
+  }
 }
 
+void ataxGpu(DATA_TYPE *A, DATA_TYPE *x, DATA_TYPE *y, DATA_TYPE *tmp,
+             DATA_TYPE *y_outputFromGpu) {
+  double t_start, t_end;
+
+  DATA_TYPE *A_gpu;
+  DATA_TYPE *x_gpu;
+  DATA_TYPE *y_gpu;
+  DATA_TYPE *tmp_gpu;
+
+  cudaMalloc((void **)&A_gpu, sizeof(DATA_TYPE) * NX * NY);
+  cudaMalloc((void **)&x_gpu, sizeof(DATA_TYPE) * NY);
+  cudaMalloc((void **)&y_gpu, sizeof(DATA_TYPE) * NY);
+  cudaMalloc((void **)&tmp_gpu, sizeof(DATA_TYPE) * NX);
+
+  cudaMemcpy(A_gpu, A, sizeof(DATA_TYPE) * NX * NY, cudaMemcpyHostToDevice);
+  cudaMemcpy(x_gpu, x, sizeof(DATA_TYPE) * NY, cudaMemcpyHostToDevice);
+  cudaMemcpy(y_gpu, y, sizeof(DATA_TYPE) * NY, cudaMemcpyHostToDevice);
+  cudaMemcpy(tmp_gpu, tmp, sizeof(DATA_TYPE) * NX, cudaMemcpyHostToDevice);
+
+  dim3 block(DIM_THREAD_BLOCK_X, DIM_THREAD_BLOCK_Y);
+  dim3 grid1((size_t)(ceil(((float)NX) / ((float)block.x))), 1);
+  dim3 grid2((size_t)(ceil(((float)NY) / ((float)block.x))), 1);
+
+  t_start = rtclock();
+  // atax_kernel1<<< grid1, block >>>(A_gpu,x_gpu,tmp_gpu);
+  launch3<DATA_TYPE, decltype(atax_kernel1), atax_kernel1>(
+      {grid1.x, block.x}, A_gpu, x_gpu, tmp_gpu);
+  cudaDeviceSynchronize();
+  // atax_kernel2<<< grid2, block >>>(A_gpu,y_gpu,tmp_gpu);
+  launch3<DATA_TYPE, decltype(atax_kernel2), atax_kernel2>(
+      {grid2.x, block.x}, A_gpu, y_gpu, tmp_gpu);
+  cudaDeviceSynchronize();
+  t_end = rtclock();
+  fprintf(stdout, "GPU Runtime: %0.6lfs\n", t_end - t_start);
+
+  cudaMemcpy(y_outputFromGpu, y_gpu, sizeof(DATA_TYPE) * NX,
+             cudaMemcpyDeviceToHost);
+
+  cudaFree(A_gpu);
+  cudaFree(x_gpu);
+  cudaFree(y_gpu);
+  cudaFree(tmp_gpu);
+}
+
+int main(int argc, char **argv) {
+  double t_start, t_end;
+
+  DATA_TYPE *A;
+  DATA_TYPE *x;
+  DATA_TYPE *y;
+  DATA_TYPE *y_outputFromGpu;
+  DATA_TYPE *tmp;
+
+  // A = (DATA_TYPE*)malloc(NX*NY*sizeof(DATA_TYPE));
+  A = new DATA_TYPE[NX * NY];
+  // x = (DATA_TYPE*)malloc(NY*sizeof(DATA_TYPE));
+  x = new DATA_TYPE[NY];
+  // y = (DATA_TYPE*)malloc(NY*sizeof(DATA_TYPE));
+  y = new DATA_TYPE[NY];
+  // y_outputFromGpu = (DATA_TYPE*)malloc(NY*sizeof(DATA_TYPE));
+  y_outputFromGpu = new DATA_TYPE[NY];
+  // tmp = (DATA_TYPE*)malloc(NX*sizeof(DATA_TYPE));
+  tmp = new DATA_TYPE[NX];
+
+  init_array(x, A);
+
+  // GPU_argv_init();
+  ataxGpu(A, x, y, tmp, y_outputFromGpu);
+
+  t_start = rtclock();
+  atax_cpu(A, x, y, tmp);
+  t_end = rtclock();
+  fprintf(stdout, "CPU Runtime: %0.6lfs\n", t_end - t_start);
+
+  compareResults(y, y_outputFromGpu);
+
+  // free(A);
+  delete[] A;
+  // free(x);
+  delete[] x;
+  // free(y);
+  delete[] y;
+  // free(y_outputFromGpu);
+  delete[] y_outputFromGpu;
+  // free(tmp);
+  delete[] tmp;
+
+  return 0;
+}
